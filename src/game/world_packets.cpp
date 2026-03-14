@@ -3722,7 +3722,14 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
     if (packet.getSize() - packet.getReadPos() < 17) return false;
 
     size_t startPos = packet.getReadPos();
+    if (!hasFullPackedGuid(packet)) {
+        return false;
+    }
     data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.casterUnit = UpdateObjectParser::readPackedGuid(packet);
 
     // Validate remaining fixed fields up to hitCount/missCount
