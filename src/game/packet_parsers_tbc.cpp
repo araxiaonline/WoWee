@@ -1277,32 +1277,33 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
         return true;
     }
 
-    data.hitCount = packet.readUInt8();
-    // Cap hit count to prevent OOM from huge target lists
-    if (data.hitCount > 128) {
-        LOG_WARNING("[TBC] Spell go: hitCount capped (requested=", (int)data.hitCount, ")");
-        data.hitCount = 128;
+    const uint8_t rawHitCount = packet.readUInt8();
+    if (rawHitCount > 128) {
+        LOG_WARNING("[TBC] Spell go: hitCount capped (requested=", (int)rawHitCount, ")");
     }
-    data.hitTargets.reserve(data.hitCount);
-    for (uint8_t i = 0; i < data.hitCount && packet.getReadPos() + 8 <= packet.getSize(); ++i) {
-        data.hitTargets.push_back(packet.readUInt64());  // full GUID in TBC
+    const uint8_t storedHitLimit = std::min<uint8_t>(rawHitCount, 128);
+    data.hitTargets.reserve(storedHitLimit);
+    for (uint16_t i = 0; i < rawHitCount && packet.getReadPos() + 8 <= packet.getSize(); ++i) {
+        const uint64_t targetGuid = packet.readUInt64();  // full GUID in TBC
+        if (i < storedHitLimit) {
+            data.hitTargets.push_back(targetGuid);
+        }
     }
+    data.hitCount = static_cast<uint8_t>(data.hitTargets.size());
     // Check if we read all expected hits
-    if (data.hitTargets.size() < data.hitCount) {
+    if (data.hitTargets.size() < rawHitCount) {
         LOG_WARNING("[TBC] Spell go: truncated hit targets at index ", (int)data.hitTargets.size(),
-                    "/", (int)data.hitCount);
-        data.hitCount = data.hitTargets.size();
+                    "/", (int)rawHitCount);
     }
 
     if (packet.getReadPos() < packet.getSize()) {
-        data.missCount = packet.readUInt8();
-        // Cap miss count to prevent OOM
-        if (data.missCount > 128) {
-            LOG_WARNING("[TBC] Spell go: missCount capped (requested=", (int)data.missCount, ")");
-            data.missCount = 128;
+        const uint8_t rawMissCount = packet.readUInt8();
+        if (rawMissCount > 128) {
+            LOG_WARNING("[TBC] Spell go: missCount capped (requested=", (int)rawMissCount, ")");
         }
-        data.missTargets.reserve(data.missCount);
-        for (uint8_t i = 0; i < data.missCount && packet.getReadPos() + 9 <= packet.getSize(); ++i) {
+        const uint8_t storedMissLimit = std::min<uint8_t>(rawMissCount, 128);
+        data.missTargets.reserve(storedMissLimit);
+        for (uint16_t i = 0; i < rawMissCount && packet.getReadPos() + 9 <= packet.getSize(); ++i) {
             SpellGoMissEntry m;
             m.targetGuid = packet.readUInt64();  // full GUID in TBC
             m.missType   = packet.readUInt8();
@@ -1313,13 +1314,15 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
                 (void)packet.readUInt32();
                 (void)packet.readUInt8();
             }
-            data.missTargets.push_back(m);
+            if (i < storedMissLimit) {
+                data.missTargets.push_back(m);
+            }
         }
+        data.missCount = static_cast<uint8_t>(data.missTargets.size());
         // Check if we read all expected misses
-        if (data.missTargets.size() < data.missCount) {
+        if (data.missTargets.size() < rawMissCount) {
             LOG_WARNING("[TBC] Spell go: truncated miss targets at index ", (int)data.missTargets.size(),
-                        "/", (int)data.missCount);
-            data.missCount = data.missTargets.size();
+                        "/", (int)rawMissCount);
         }
     }
 

@@ -410,33 +410,34 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
 
     // Hit targets
     if (rem() < 1) return true;
-    data.hitCount = packet.readUInt8();
-    // Cap hit count to prevent OOM from huge target lists
-    if (data.hitCount > 128) {
-        LOG_WARNING("[Classic] Spell go: hitCount capped (requested=", (int)data.hitCount, ")");
-        data.hitCount = 128;
+    const uint8_t rawHitCount = packet.readUInt8();
+    if (rawHitCount > 128) {
+        LOG_WARNING("[Classic] Spell go: hitCount capped (requested=", (int)rawHitCount, ")");
     }
-    data.hitTargets.reserve(data.hitCount);
-    for (uint8_t i = 0; i < data.hitCount && rem() >= 1; ++i) {
-        data.hitTargets.push_back(UpdateObjectParser::readPackedGuid(packet));
+    const uint8_t storedHitLimit = std::min<uint8_t>(rawHitCount, 128);
+    data.hitTargets.reserve(storedHitLimit);
+    for (uint16_t i = 0; i < rawHitCount && rem() >= 1; ++i) {
+        const uint64_t targetGuid = UpdateObjectParser::readPackedGuid(packet);
+        if (i < storedHitLimit) {
+            data.hitTargets.push_back(targetGuid);
+        }
     }
+    data.hitCount = static_cast<uint8_t>(data.hitTargets.size());
     // Check if we read all expected hits
-    if (data.hitTargets.size() < data.hitCount) {
+    if (data.hitTargets.size() < rawHitCount) {
         LOG_WARNING("[Classic] Spell go: truncated hit targets at index ", (int)data.hitTargets.size(),
-                    "/", (int)data.hitCount);
-        data.hitCount = data.hitTargets.size();
+                    "/", (int)rawHitCount);
     }
 
     // Miss targets
     if (rem() < 1) return true;
-    data.missCount = packet.readUInt8();
-    // Cap miss count to prevent OOM
-    if (data.missCount > 128) {
-        LOG_WARNING("[Classic] Spell go: missCount capped (requested=", (int)data.missCount, ")");
-        data.missCount = 128;
+    const uint8_t rawMissCount = packet.readUInt8();
+    if (rawMissCount > 128) {
+        LOG_WARNING("[Classic] Spell go: missCount capped (requested=", (int)rawMissCount, ")");
     }
-    data.missTargets.reserve(data.missCount);
-    for (uint8_t i = 0; i < data.missCount && rem() >= 2; ++i) {
+    const uint8_t storedMissLimit = std::min<uint8_t>(rawMissCount, 128);
+    data.missTargets.reserve(storedMissLimit);
+    for (uint16_t i = 0; i < rawMissCount && rem() >= 2; ++i) {
         SpellGoMissEntry m;
         m.targetGuid = UpdateObjectParser::readPackedGuid(packet);
         if (rem() < 1) break;
@@ -446,13 +447,15 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
             (void)packet.readUInt32();
             (void)packet.readUInt8();
         }
-        data.missTargets.push_back(m);
+        if (i < storedMissLimit) {
+            data.missTargets.push_back(m);
+        }
     }
+    data.missCount = static_cast<uint8_t>(data.missTargets.size());
     // Check if we read all expected misses
-    if (data.missTargets.size() < data.missCount) {
+    if (data.missTargets.size() < rawMissCount) {
         LOG_WARNING("[Classic] Spell go: truncated miss targets at index ", (int)data.missTargets.size(),
-                    "/", (int)data.missCount);
-        data.missCount = data.missTargets.size();
+                    "/", (int)rawMissCount);
     }
 
     LOG_DEBUG("[Classic] Spell go: spell=", data.spellId, " hits=", (int)data.hitCount,
