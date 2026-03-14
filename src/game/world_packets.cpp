@@ -3363,15 +3363,15 @@ bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpda
     data.totalDamage = static_cast<int32_t>(packet.readUInt32());
     data.subDamageCount = packet.readUInt8();
 
-    // Cap subDamageCount: each entry is 20 bytes.  If the claimed count
+    // Cap subDamageCount: each entry is 20 bytes. If the claimed count
     // exceeds what the remaining bytes can hold, a GUID was mis-parsed
     // (off by one byte), causing the school-mask byte to be read as count.
-    // In that case silently clamp to the number of full entries that fit.
+    // In that case clamp to the number of full entries that fit.
     {
         size_t remaining = packet.getSize() - packet.getReadPos();
         size_t maxFit    = remaining / 20;
         if (data.subDamageCount > maxFit) {
-            data.subDamageCount = static_cast<uint8_t>(maxFit > 0 ? 1 : 0);
+            data.subDamageCount = static_cast<uint8_t>(std::min<size_t>(maxFit, 64));
         } else if (data.subDamageCount > 64) {
             data.subDamageCount = 64;
         }
