@@ -351,7 +351,7 @@ network::Packet RealmListPacket::build() {
 
 bool RealmListResponseParser::parse(network::Packet& packet, RealmListResponse& response, uint8_t protocolVersion) {
     // Note: opcode byte already consumed by handlePacket()
-    const bool isVanilla = (protocolVersion < 8);
+    const bool isLegacyVanilla = (protocolVersion <= 3);
 
     // Packet size (2 bytes) - we already know the size, skip it
     uint16_t packetSize = packet.readUInt16();
@@ -360,9 +360,9 @@ bool RealmListResponseParser::parse(network::Packet& packet, RealmListResponse& 
     // Unknown uint32
     packet.readUInt32();
 
-    // Realm count: uint8 for vanilla/classic, uint16 for WotLK+
+    // Realm count: uint8 for legacy vanilla/classic, uint16 for TBC/WotLK.
     uint16_t realmCount;
-    if (isVanilla) {
+    if (isLegacyVanilla) {
         realmCount = packet.readUInt8();
     } else {
         realmCount = packet.readUInt16();
@@ -375,19 +375,15 @@ bool RealmListResponseParser::parse(network::Packet& packet, RealmListResponse& 
     for (uint16_t i = 0; i < realmCount; ++i) {
         Realm realm;
 
-        // Icon/type: uint32 for vanilla, uint8 for WotLK
-        if (isVanilla) {
+        // Icon/type: uint32 for legacy vanilla, uint8 for TBC/WotLK.
+        if (isLegacyVanilla) {
             realm.icon = static_cast<uint8_t>(packet.readUInt32());
         } else {
             realm.icon = packet.readUInt8();
         }
 
-        // Lock: not present in vanilla (added in TBC)
-        if (!isVanilla) {
-            realm.lock = packet.readUInt8();
-        } else {
-            realm.lock = 0;
-        }
+        // Lock is not present in legacy vanilla, but is present in TBC/WotLK.
+        realm.lock = isLegacyVanilla ? 0 : packet.readUInt8();
 
         // Flags
         realm.flags = packet.readUInt8();
