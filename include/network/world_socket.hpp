@@ -23,7 +23,7 @@ namespace network {
  * World Server Socket
  *
  * Handles WoW world server protocol with header encryption.
- * Supports both vanilla/TBC (XOR+addition cipher) and WotLK (RC4).
+ * Supports vanilla/classic raw XOR, CMaNGOS TBC HMAC-derived XOR, and WotLK RC4.
  *
  * Key Differences from Auth Server:
  * - Outgoing: 6-byte header (2 bytes size + 4 bytes opcode, big-endian)
@@ -69,7 +69,7 @@ public:
      * Must be called after CMSG_AUTH_SESSION before further communication
      *
      * @param sessionKey 40-byte session key from auth server
-     * @param build Client build number (determines cipher: <= 8606 = XOR, > 8606 = RC4)
+     * @param build Client build number (determines cipher family)
      */
     void initEncryption(const std::vector<uint8_t>& sessionKey, uint32_t build = 12340);
 

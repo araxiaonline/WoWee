@@ -631,7 +631,7 @@ std::string WardenMemory::findWowExe(uint16_t build) const {
     candidateDirs.push_back("Data/misc");
     candidateDirs.push_back("Data/expansions/turtle/overlay/misc");
 
-    const char* candidateExes[] = { "WoW.exe", "TurtleWoW.exe", "Wow.exe" };
+    const char* candidateExes[] = { "WoW.exe", "TurtleWoW.exe", "Wow.exe", "wow.exe" };
 
     // Collect all candidate paths
     std::vector<std::string> allPaths;

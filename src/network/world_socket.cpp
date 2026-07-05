@@ -853,17 +853,29 @@ void WorldSocket::initEncryption(const std::vector<uint8_t>& sessionKey, uint32_
         return;
     }
 
-    // Vanilla/TBC (build <= 8606) uses XOR+addition cipher with raw session key
-    // WotLK (build > 8606) uses HMAC-SHA1 derived RC4 with 1024-byte drop
-    useVanillaCrypt = (build <= 8606);
+    const bool useRawVanillaCrypt = (build <= 5875);
+    const bool useCmangosTbcCrypt = (build > 5875 && build <= 8606);
+    useVanillaCrypt = useRawVanillaCrypt || useCmangosTbcCrypt;
 
-    LOG_INFO(">>> ENABLING ENCRYPTION (", useVanillaCrypt ? "vanilla XOR" : "WotLK RC4",
+    LOG_INFO(">>> ENABLING ENCRYPTION (",
+             useRawVanillaCrypt ? "vanilla XOR" : (useCmangosTbcCrypt ? "CMaNGOS TBC HMAC-XOR" : "WotLK RC4"),
              ") build=", build, " <<<");
 
-    if (useVanillaCrypt) {
+    if (useRawVanillaCrypt) {
         vanillaCrypt.init(sessionKey);
+    } else if (useCmangosTbcCrypt) {
+        // CMaNGOS TBC AuthCrypt::Init:
+        //   key = HMAC_SHA1({38 A7 83 15 F8 92 25 30 71 98 67 B1 8C 04 E2 AA}, K)
+        // Then the vanilla XOR+addition header cipher is used with that 20-byte key.
+        static constexpr uint8_t kCmangosTbcSeed[] = {
+            0x38, 0xA7, 0x83, 0x15, 0xF8, 0x92, 0x25, 0x30,
+            0x71, 0x98, 0x67, 0xB1, 0x8C, 0x04, 0xE2, 0xAA
+        };
+        std::vector<uint8_t> seed(kCmangosTbcSeed, kCmangosTbcSeed + sizeof(kCmangosTbcSeed));
+        std::vector<uint8_t> headerKey = auth::Crypto::hmacSHA1(seed, sessionKey);
+        vanillaCrypt.init(headerKey);
     } else {
-        // WotLK: HMAC-SHA1(hardcoded seed, sessionKey) → RC4 key
+        // WotLK: HMAC-SHA1(hardcoded seed, sessionKey) -> RC4 key
         std::vector<uint8_t> encryptKey(ENCRYPT_KEY, ENCRYPT_KEY + 16);
         std::vector<uint8_t> decryptKey(DECRYPT_KEY, DECRYPT_KEY + 16);
 

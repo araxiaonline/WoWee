@@ -293,7 +293,7 @@ void AuthHandler::sendLogonProof() {
             }
         }
 
-        const char* candidateExes[] = { "WoW.exe", "TurtleWoW.exe", "Wow.exe" };
+        const char* candidateExes[] = { "WoW.exe", "TurtleWoW.exe", "Wow.exe", "wow.exe" };
         bool ok = false;
         std::string lastErr;
         for (const auto& dir : candidateDirs) {
