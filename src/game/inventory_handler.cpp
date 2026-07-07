@@ -698,13 +698,16 @@ void InventoryHandler::lootItem(uint8_t slotIndex) {
 
 void InventoryHandler::closeLoot() {
     if (!lootWindowOpen_) return;
+    const uint64_t lootGuid = currentLoot_.lootGuid;
+    const bool despawnGatherNode = owner_.isGatherGameObject(lootGuid);
     if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
-        auto packet = LootReleasePacket::build(currentLoot_.lootGuid);
+        auto packet = LootReleasePacket::build(lootGuid);
         owner_.getSocket()->send(packet);
     }
     lootWindowOpen_ = false;
     if (owner_.lootWindowCallbackRef()) owner_.lootWindowCallbackRef()(false);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("LOOT_CLOSED", {});
+    if (despawnGatherNode) owner_.despawnGameObjectLocally(lootGuid);
     currentLoot_ = LootResponseData{};
 }
 
@@ -723,8 +726,13 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
     const bool hasLoot = !currentLoot_.items.empty() || currentLoot_.gold > 0;
     LOG_DEBUG("SMSG_LOOT_RESPONSE: guid=0x", std::hex, currentLoot_.lootGuid, std::dec,
               " items=", currentLoot_.items.size(), " gold=", currentLoot_.gold);
-    if (!hasLoot && owner_.isCasting() && owner_.getCurrentCastSpellId() != 0 && lastInteractedGoGuid_ != 0) {
-        LOG_DEBUG("Ignoring empty SMSG_LOOT_RESPONSE during gather cast");
+    auto& lastInteractedGoGuid = owner_.lastInteractedGoGuidRef();
+    const bool isLastInteractedGoLoot =
+        lastInteractedGoGuid != 0 && currentLoot_.lootGuid == lastInteractedGoGuid;
+    if (!hasLoot && isLastInteractedGoLoot &&
+        ((owner_.isCasting() && owner_.getCurrentCastSpellId() != 0) ||
+         owner_.hasPendingGameObjectLootOpen(currentLoot_.lootGuid))) {
+        LOG_DEBUG("Ignoring empty SMSG_LOOT_RESPONSE during pending gather/open");
         return;
     }
     lootWindowOpen_ = true;
@@ -733,11 +741,10 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
         owner_.addonEventCallbackRef()("LOOT_OPENED", {});
         owner_.addonEventCallbackRef()("LOOT_READY", {});
     }
-    lastInteractedGoGuid_ = 0;
-    pendingGameObjectLootOpens_.erase(
-        std::remove_if(pendingGameObjectLootOpens_.begin(), pendingGameObjectLootOpens_.end(),
-                       [&](const PendingLootOpen& p) { return p.guid == currentLoot_.lootGuid; }),
-        pendingGameObjectLootOpens_.end());
+    if (currentLoot_.lootGuid == lastInteractedGoGuid) {
+        lastInteractedGoGuid = 0;
+    }
+    owner_.clearPendingGameObjectLootOpen(currentLoot_.lootGuid);
     auto& localLoot = localLootState_[currentLoot_.lootGuid];
     localLoot.data = currentLoot_;
 
@@ -772,10 +779,13 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
 
 void InventoryHandler::handleLootReleaseResponse(network::Packet& packet) {
     (void)packet;
-    localLootState_.erase(currentLoot_.lootGuid);
+    const uint64_t lootGuid = currentLoot_.lootGuid;
+    const bool despawnGatherNode = owner_.isGatherGameObject(lootGuid);
+    localLootState_.erase(lootGuid);
     lootWindowOpen_ = false;
     if (owner_.lootWindowCallbackRef()) owner_.lootWindowCallbackRef()(false);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("LOOT_CLOSED", {});
+    if (despawnGatherNode) owner_.despawnGameObjectLocally(lootGuid);
     currentLoot_ = LootResponseData{};
 }
 

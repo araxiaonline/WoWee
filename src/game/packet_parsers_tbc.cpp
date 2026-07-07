@@ -742,6 +742,19 @@ network::Packet TbcPacketParsers::buildCastSpell(uint32_t spellId, uint64_t targ
     return packet;
 }
 
+network::Packet TbcPacketParsers::buildCastGameObjectSpell(uint32_t spellId, uint64_t targetGuid, uint8_t castCount) {
+    network::Packet packet(wireOpcode(LogicalOpcode::CMSG_CAST_SPELL));
+    packet.writeUInt32(spellId);
+    packet.writeUInt8(castCount);
+    // No castFlags byte in TBC 2.4.3
+    packet.writeUInt32(0x0800); // TARGET_FLAG_GAMEOBJECT
+    packet.writePackedGuid(targetGuid);
+    LOG_DEBUG("[TBC] Built CMSG_CAST_SPELL: spell=", spellId, " gameObject=0x",
+              std::hex, targetGuid, std::dec, " castCount=", static_cast<int>(castCount),
+              " size=", packet.getSize());
+    return packet;
+}
+
 // ============================================================================
 // TBC 2.4.3 CMSG_USE_ITEM
 // Format: bag(u8) + slot(u8) + spellIndex(u8) + castCount(u8) + itemGuid(u64)
@@ -1457,6 +1470,17 @@ static uint8_t translateTbcCastFailure(uint8_t tbcResult) {
     // TBC has no SUCCESS entry, while WoWee's shared string table is WotLK-based.
     // Most early values line up with +1.  Later enum sections diverge; map observed
     // high-value TBC failures explicitly so user-facing errors stay sane.
+    switch (tbcResult) {
+        case 0x17: return 25;  // SPELL_FAILED_CHEST_IN_USE
+        case 0x24: return 38;  // SPELL_FAILED_IMMUNE
+        case 0x25: return 40;  // SPELL_FAILED_INTERRUPTED
+        case 0x26: return 41;  // SPELL_FAILED_INTERRUPTED_COMBAT
+        case 0x2E: return 49;  // SPELL_FAILED_LOW_CASTLEVEL
+        case 0x7F: return 132; // SPELL_FAILED_TRY_AGAIN
+        case 0x91: return 146; // SPELL_FAILED_DAMAGE_IMMUNE
+        case 0x95: return 150; // SPELL_FAILED_MIN_SKILL
+        default: break;
+    }
     if (tbcResult == 63) return 67; // SPELL_FAILED_NOT_READY
     return static_cast<uint8_t>(tbcResult + 1);
 }
