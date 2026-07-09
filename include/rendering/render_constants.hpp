@@ -21,6 +21,21 @@ constexpr float M2_LOD3_DISTANCE        = 150.0f;  // Beyond this: no bone updat
 constexpr float M2_BONE_SKIP_DIST_FAR   = 100.0f;  // Beyond this: every 4th frame
 constexpr float M2_BONE_SKIP_DIST_MID   = 50.0f;   // Beyond this: every 2nd frame
 
+// How often (in rendered frames) an animated M2's bone matrices are recomputed,
+// as a function of squared distance from the CAMERA. animationTime advances every
+// frame regardless; if bones are sampled less often the pose freezes then jumps N
+// frames at once — the choppy "sprite-swap" look. So anything within normal view
+// distance MUST return 1 (every frame). The 3rd-person camera sits 10–22 units from
+// the player (up to 50 zoomed out — see camera_controller.hpp MAX_DISTANCE_*), so
+// the player's OWN model is in view distance; only genuinely distant units throttle.
+// Shares the M2_BONE_SKIP_DIST_* tiers so the character and doodad paths can't drift.
+// See araxia/docs/improvements/003-animation-not-fluid-interpolation.md.
+constexpr uint32_t boneUpdateIntervalForDistanceSq(float distSq) {
+    if (distSq > M2_BONE_SKIP_DIST_FAR * M2_BONE_SKIP_DIST_FAR) return 4;  // >100u: every 4th
+    if (distSq > M2_BONE_SKIP_DIST_MID * M2_BONE_SKIP_DIST_MID) return 2;  // >50u: every 2nd
+    return 1;                                                             // <=50u: every frame
+}
+
 // ---------------------------------------------------------------------------
 // M2 culling geometry
 // ---------------------------------------------------------------------------

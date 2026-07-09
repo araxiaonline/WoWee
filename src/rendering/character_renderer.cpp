@@ -25,6 +25,7 @@
 #include "rendering/vk_frame_data.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/frustum.hpp"
+#include "rendering/render_constants.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/blp_loader.hpp"
 #include "core/logger.hpp"
@@ -1879,11 +1880,13 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             }
         }
 
-        // Distance-tiered bone throttling: near=every frame, mid=every 4th, far=every 8th
-        uint32_t boneInterval = 1;
-        if (distSq > 40.0f * 40.0f) boneInterval = 8;
-        else if (distSq > 20.0f * 20.0f) boneInterval = 4;
-        else if (distSq > 10.0f * 10.0f) boneInterval = 2;
+        // Bone-update LOD: recompute every frame within view distance, throttle only
+        // for distant units. animationTime advances every frame, so throttling bone
+        // sampling makes the pose freeze-then-jump (choppy "sprite-swap"). The old
+        // thresholds started throttling at 10u — but the 3rd-person camera sits 10–22u
+        // from the player, so the player's OWN model was throttled. Shared with the M2
+        // doodad path via render_constants.hpp so the two can't drift. (Story 003.)
+        const uint32_t boneInterval = boneUpdateIntervalForDistanceSq(distSq);
 
         inst.boneUpdateCounter++;
         bool needsBones = (inst.boneUpdateCounter >= boneInterval) || inst.boneMatrices.empty();

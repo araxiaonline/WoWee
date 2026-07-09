@@ -233,6 +233,17 @@ target_link_libraries(test_anim_capability PRIVATE catch2_main)
 add_test(NAME anim_capability COMMAND test_anim_capability)
 register_test_target(test_anim_capability)
 
+# ── test_bone_lod ────────────────────────────────────────────
+# Header-only: bone-update distance-LOD throttle (story 003)
+add_executable(test_bone_lod
+    test_bone_lod.cpp
+)
+target_include_directories(test_bone_lod PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_bone_lod SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_bone_lod PRIVATE catch2_main)
+add_test(NAME bone_lod COMMAND test_bone_lod)
+register_test_target(test_bone_lod)
+
 # ── test_indoor_shadows ──────────────────────────────────────
 add_executable(test_indoor_shadows
     test_indoor_shadows.cpp
