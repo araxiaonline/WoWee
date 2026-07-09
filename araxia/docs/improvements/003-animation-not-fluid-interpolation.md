@@ -1,7 +1,17 @@
 # Story 003: Character/creature animations look choppy (sprite-swap), not smooth 3D
 
 ## Status
-In Progress — root cause CONFIRMED (caveat resolved), fix under way on branch `fix/003-animation-distance-lod`.
+DONE — root cause CONFIRMED, fix implemented (TDD red→green, 32/32 tests) on branch
+`fix/003-animation-distance-lod`, and **LIVE-VERIFIED 2026-07-09** against the live Araxia server:
+player's own Paladin and follower bots animate smoothly at default and zoomed-out camera
+distances. Code commit `c553992c` is upstream-ready (no `araxia/`).
+
+> **Live verification note (2026-07-09):** After fixing an unrelated launcher issue (the client
+> ignores `argv`; data path must come from `$WOW_DATA_PATH`, not a `--data` flag), the fixed build
+> was run against the live server. Animation is smooth on the player character and on NPCBot party
+> followers at normal play distances — the reported sprite-swap stutter is gone. Distant-unit
+> throttling (interval 2 beyond 50u, 4 beyond 100u) is retained by design and did not read as
+> choppy in normal play.
 
 > **Update 2026-07-09 (rule 10):** The original investigation flagged a caveat — "within 10
 > yards `boneInterval=1`, so point-blank should be smooth; if a point-blank unit is *also*
