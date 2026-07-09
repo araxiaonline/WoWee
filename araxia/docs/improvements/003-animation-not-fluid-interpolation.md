@@ -1,7 +1,20 @@
 # Story 003: Character/creature animations look choppy (sprite-swap), not smooth 3D
 
 ## Status
-Investigated
+In Progress — root cause CONFIRMED (caveat resolved), fix under way on branch `fix/003-animation-distance-lod`.
+
+> **Update 2026-07-09 (rule 10):** The original investigation flagged a caveat — "within 10
+> yards `boneInterval=1`, so point-blank should be smooth; if a point-blank unit is *also*
+> choppy the root cause is incomplete." User reported choppiness on **their own character too**,
+> which first *looked* like it invalidated the throttle. It does **not** — the caveat was based
+> on a wrong assumption. `distSq` is measured from the **camera**, and the 3rd-person camera sits
+> **10–22 units** from the player at default/normal zoom (up to 50 zoomed out) —
+> `MAX_DISTANCE_NORMAL = 22`, `MAX_DISTANCE_EXTENDED = 50`, default `userTargetDistance = 10` in
+> `include/rendering/camera_controller.hpp:205-211`. The throttle starts at `distSq > 10*10`, so
+> the player's OWN model is already at interval **2–4** in normal play. The distance-LOD throttle
+> IS the primary cause, including for the player. Fix confirmed: relax the throttle so everything
+> within the 50u max-zoom updates every frame. (The `<10-yard = smooth` premise was true but
+> irrelevant, because a 3rd-person camera is never within 10 yards.)
 
 ## Story
 **As a** player, **I want** character and creature skeletal animations to update smoothly every rendered frame at normal viewing distance, **so that** movement looks like fluid 3D animation instead of an old game snapping between discrete poses.
@@ -94,6 +107,24 @@ Against a live AzerothCore/TrinityCore 3.3.5a server:
 | Date | Change | Author |
 |---|---|---|
 | 2026-07-09 | Story created + investigated | agent team |
+| 2026-07-09 | Caveat RESOLVED: user's own character also choppy → confirmed via camera distance (10–22u, throttle at 10u) that the player IS throttled; distance-LOD throttle is the primary cause. Fix started on `fix/003-animation-distance-lod`. | James + Claude |
 
 ## Dev Agent Record
-_(populated during implementation)_
+- **Branch:** `fix/003-animation-distance-lod`
+- **Approach:** extract the inline throttle in `character_renderer.cpp` into a testable pure
+  `boneUpdateIntervalForDistanceSq(distSq)` in `render_constants.hpp` (shared with the M2 doodad
+  path to prevent drift); relax it so units within the 50u max-zoom update every frame; pin the
+  behavior with a Catch2 test that fails against the old thresholds. Fixed the misleading inline
+  comment (said 3 tiers; code had 4).
+- **Files touched:**
+  - `include/rendering/render_constants.hpp` — new `constexpr boneUpdateIntervalForDistanceSq()` on the shared M2 tiers.
+  - `src/rendering/character_renderer.cpp` — call the function instead of the inline throttle; fixed the misleading comment; added the include.
+  - `tests/test_bone_lod.cpp` — new Catch2 test pinning the intended distance→interval spec.
+  - `tests/CMakeLists.txt` — registered `test_bone_lod`.
+- **Completion notes:** TDD red→green — the test failed against the old thresholds (player at 50u
+  zoom was on interval 8) and passes after the fix. Full suite 32/32 green, 0 build errors.
+  Scope kept to the throttle only (rule 7); the story's heavier "temporal bone interpolation"
+  option was NOT needed for the reported problem and is left as a future option if distant-unit
+  smoothness is ever wanted. **Pending: live verification against the server** (smoothness of the
+  player + nearby creatures at normal and zoomed-out camera). Distant-unit perf sanity in a
+  crowded city still worth a glance (relaxed thresholds do more per-frame bone work in dense scenes).
