@@ -26,6 +26,25 @@ distances. Code commit `c553992c` is upstream-ready (no `araxia/`).
 > within the 50u max-zoom updates every frame. (The `<10-yard = smooth` premise was true but
 > irrelevant, because a 3rd-person camera is never within 10 yards.)
 
+## Upstream Contribution — TODO (fork-only tracking; do NOT PR this section)
+The fix is upstream-worthy (verified real-world). When we choose to contribute it to
+`Kelsidavis/WoWee`, do this — the discipline is: **branch from `upstream/master`, never from our
+fork's `master`** (ours carries `araxia/`), and ship ONLY the code commit `c553992c`.
+
+- [ ] Decide to contribute upstream (owner: James — deferred for now, 2026-07-09).
+- [ ] `git fetch upstream`
+- [ ] `git checkout -b pr/003-animation-lod upstream/master`   ← clean base, no `araxia/`
+- [ ] `git cherry-pick c553992c`   ← the ONLY commit; touches render_constants.hpp,
+      character_renderer.cpp, tests/CMakeLists.txt, tests/test_bone_lod.cpp
+- [ ] Verify clean: `git show --stat HEAD` shows 4 code files, **zero** `araxia/`
+- [ ] Build + `ctest` green on the clean branch (no fork-only deps)
+- [ ] `git push origin pr/003-animation-lod`; open PR → `Kelsidavis/WoWee:master`
+- [ ] PR body: camera-distance throttle started at 10u while the 3rd-person camera sits 10–22u
+      (50u zoomed) from the player, so the player's own model was throttled to interval 2–4 →
+      sprite-swap look; fix returns interval 1 within the 50u max-zoom via a shared
+      `boneUpdateIntervalForDistanceSq()` helper (character + doodad paths); distant-unit LOD
+      tiers (2 beyond 50u, 4 beyond 100u) retained. Live-verified on player, bots, world NPCs.
+
 ## Story
 **As a** player, **I want** character and creature skeletal animations to update smoothly every rendered frame at normal viewing distance, **so that** movement looks like fluid 3D animation instead of an old game snapping between discrete poses.
 
