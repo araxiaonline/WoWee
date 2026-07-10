@@ -1,97 +1,129 @@
 # Story 002: Creatures always play Run animation regardless of walk/run mode or idle state
 
 ## Status
-Investigated
+In Progress — **Part 1 (walk/run) reworked to SPEED INFERENCE** for WotLK/AzerothCore, implemented +
+unit-tested (TDD red→green) on branch `fix/002-creature-run-animation` (branched from `master`,
+independent of #3). Awaiting live verification. Part 2 (return-to-idle / "run in place") still deferred.
+
+> ### ⚠️ Major course-correction (2026-07-09) — the original "Walkmode spline flag" premise was WRONG for this server
+> The first implementation read a `Walkmode` spline-flag bit (assumed `0x1000`) from `SMSG_MONSTER_MOVE`.
+> Live testing against the Araxia AzerothCore server disproved it: patrolling Orgrimmar orcs moved at
+> **walk speed but played the run animation**, and a diagnostic showed **every** creature move arriving with
+> `splineFlags = 0x0` (485/485 samples). Reading the **AzerothCore server source** (`~/github.com/araxiaonline/AzerothCore-wotlk-with-NPCBots`)
+> plus **cmangos classic/TBC** clones settled it definitively:
+>
+> 1. **AzerothCore (WotLK) has no Walkmode spline flag at all.** In `MoveSplineFlag::Enum`, bit `0x1000` is
+>    `CanSwim`, and there is no walk/run bit. `MoveSplineInit::SetWalk(enable)` only sets `args.walk`
+>    (spline **velocity**), never a serialized flag or `MOVEMENTFLAG_WALKING`. `WaypointMovementGenerator`
+>    uses `init.SetWalk(...)` (velocity), not `Unit::SetWalk(...)` (which would set `MOVEMENTFLAG_WALKING`).
+> 2. **`splineFlags = 0x0` is CORRECT for ground creatures.** `WriteCommonMonsterMovePart` writes **linear**
+>    paths (`WriteLinearPath`) for ground units and masks the flags with `~Mask_No_Monster_Move`, so a normal
+>    ground move legitimately carries no flags. The client reads them at the right offset (byte order matches
+>    the server serializer exactly). Not a parse bug.
+> 3. **Walk vs run is therefore expressed ONLY by the spline's speed** (walk ≈ 2.5 yd/s, run ≈ 7.0 yd/s).
+>    The fix must **infer** it from `pathLength / duration`, not read a flag.
+
+### Cross-core spline-flag comparison (verified against source)
+WoWee's `SplineFlag` table is the **mangos (Classic/TBC)** layout — it does **not** match WotLK.
+
+| Bit | mangos Classic/TBC = **WoWee's table** | WotLK (AzerothCore/TrinityCore) |
+|-----|----------------------------------------|--------------------------------|
+| `0x100`  | `Runmode`/`Walkmode` (walk/run signal) | `Done` |
+| `0x200`  | `Flying` | `Falling` |
+| `0x800`  | (unknown) | `Parabolic` |
+| `0x1000` | (unknown) | `CanSwim` |
+| `0x8000` | (unknown) | `Final_Point` |
+| `0x10000`| `Final_Point` | `Final_Target` |
+| `0x40000`| `Final_Angle` | `Catmullrom` |
+| `0x80000`| (unknown) | `Cyclic` |
+| **walk/run** | **spline flag bit `0x100`** | **spline velocity — NO flag** |
+
+**Implications:**
+- Classic/TBC/Turtle DO have a walk/run flag (`0x100`); WotLK does not.
+- WoWee parsing WotLK spline flags with the Classic/TBC table means flying/catmullrom/cyclic paths are
+  **misinterpreted** (wrong uncompressed-vs-compressed waypoint branch). Ground creatures are unaffected
+  (`0x0` either way). → **Separate movement-layer issue** (expansion-blind spline flags); filed apart from 002.
 
 ## Story
-**As a** player, **I want** NPCs and creatures to walk when the server tells them to walk, run when they run, and stand idle when they stop, **so that** the world reads correctly (patrolling guards stroll, fleeing critters run, idle mobs stand still) instead of every creature sprinting in place.
+**As a** player, **I want** NPCs and creatures to walk when the server is walking them, run when they run, and stand idle when they stop, **so that** the world reads correctly (patrolling guards stroll, fleeing critters run, idle mobs stand still) instead of every creature sprinting in place.
 
 ## Context / Observed Behavior
-Every creature plays its RUN animation (M2 AnimationData id 5) whenever it moves, even creatures the server is walking (patrol guards, ambient wanderers). In addition, many creatures continue to play the looping RUN animation while standing perfectly still (the classic "run in place" bug).
+Every creature plays RUN (anim 5) whenever it moves — even ones the server walks (patrol guards, ambient wanderers), which visibly move at **walk speed** while showing the **run** animation. Many creatures also keep looping RUN while standing perfectly still ("run in place").
 
 ## Expected Behavior
-Real WoW 3.3.5a drives NPC locomotion animation from the movement the server sends:
-- A `SMSG_MONSTER_MOVE` spline carrying the **Walkmode** spline flag → play **Walk** (id 4).
-- A normal (run) spline → play **Run** (id 5).
-- When a spline completes and no new movement arrives → return to **Stand** (id 0) (or SwimIdle/FlyIdle as appropriate).
-Walk vs run is a server-authoritative property of the move, not something inferred from raw client-side speed.
+- A creature moving at walk speed plays **Walk** (4); at run speed plays **Run** (5).
+- When a move spline ends and no follow-up arrives, the creature returns to **Stand** (0).
+- Walk/run is derived from the **server-sent movement** (on WotLK: the spline's speed), never guessed from nothing.
 
 ## Acceptance Criteria
-1. A creature the server is walking (Walkmode spline flag, e.g. a patrolling guard) plays Walk (4), not Run (5).
+1. A creature the server is walking (walk-speed spline, e.g. a patrolling guard) plays Walk (4), not Run (5).
 2. A creature the server is running plays Run (5).
-3. When any creature's movement spline ends and no follow-up move is received, it returns to Stand (0) within a frame or two and stays there — no run-in-place.
-4. Swimming and flying creatures still resolve to Swim/SwimIdle and Fly/FlyIdle respectively (no regression).
+3. When a creature's spline ends and no follow-up move is received, it returns to Stand (0) within a frame or two — no run-in-place. *(Part 2)*
+4. Swimming/flying creatures still resolve to Swim/SwimIdle and Fly/FlyIdle (no regression).
 5. Death animation is never overridden by locomotion selection (existing guard preserved).
 
-## Investigation (Dev Notes)
+## Root cause (corrected)
+1. **Walk never selected (primary).** The creature-move path hardcoded RUN and never derived walk. On WotLK there is no flag to read, so walk must be inferred from spline speed.
+2. **Per-frame override (why a one-shot fix didn't stick).** `application.cpp` re-selects Walk/Run **every frame** from `getCreatureWalkingState()` (aliased at `:1762` and `:2005`) and defaults to RUN when the guid is absent. That map is only fed by `MSG_MOVE_*` WALKING flags — which spline-driven NPCs never send — so it overrode any one-shot `playAnimation` in the move callback. The fix must feed that map.
+3. **Run-in-place (secondary, Part 2).** RUN's only teardown to STAND is the edge-triggered per-frame sync, which is skippable when the unit is sync-culled (>320u). A `LocomotionFSM` with a WALK/RUN→IDLE grace timer already exists and is the right home.
 
-### Where it lives
-- `src/core/entity_spawn_callback_handler.cpp:131-164` — `setCreatureMoveCallback`, the primary driver of creature locomotion animation on every server move. Line **158** hardcodes `rendering::anim::RUN`. Line **160** sets `_creatureWasMoving[guid] = true`.
-- `include/game/spline_packet.hpp:50-65` — `namespace SplineFlag` constant table. **No Walkmode bit is defined.**
-- `src/game/spline_packet.cpp:32-` (`parseMonsterMoveSplineBody`) — parses the spline body; `out.splineFlags` is stored but the walk bit is never extracted or surfaced.
-- `src/game/movement_handler.cpp:1482-1486` and `:1616-1617` — `SMSG_MONSTER_MOVE` handlers invoke `creatureMoveCallbackRef()(guid, x, y, z, duration)`; the callback signature (`include/game/game_handler.hpp`, `CreatureMoveCallback = void(uint64_t,float,float,float,uint32_t)`) has **no walk flag parameter**.
-- `src/core/animation_callback_handler.cpp:306-319` — `setUnitMoveFlagsCallback` is the *only* writer of `creatureWalkingState_` (via `getCreatureWalkingState()[guid]=true` when `MovementFlags::WALKING` is set). It is fed from `MSG_MOVE_*` movement-info flags (`movement_handler.cpp:1110-1111`) and object-update blocks (`entity_controller.cpp:1409-1411,1478-1480`) — packets that **players/other players emit, but ordinary NPC spline patrols do not**.
-- `src/core/application.cpp:1934-1969` — the per-frame "authoritative" locomotion re-selection (`isWalkingNow ? WALK : RUN`, `STAND` when idle). This is the code that *could* pick Walk, but see below why it doesn't.
-- `src/core/application.cpp:1799` — creature sync loop early `continue` when `canonDistSq > syncRadiusSq` (320u), *above* the animation block.
-- `src/rendering/character_renderer.cpp:1833-1842` — completes move interpolation (`inst.isMoving=false`) with **no** animation reset. `moveInstanceTo` only resets to Stand on an explicit zero-distance stop (`:3198-3201`).
-- `include/rendering/animation/animation_ids.hpp:23-28` — confirms STAND=0, WALK=4, RUN=5.
-
-### Root-cause hypothesis
-**Primary ("always run regardless of speed") — HIGH confidence.** Walk-mode is never available on the creature path, so Run is always chosen:
-1. The server's per-move Walkmode signal lives in the `SMSG_MONSTER_MOVE` spline flags, but `SplineFlag` (`spline_packet.hpp:50`) defines no Walkmode bit and the parser never extracts it.
-2. The `creatureMoveCallback` signature carries no walk flag, and its implementation (`entity_spawn_callback_handler.cpp:158`) unconditionally plays `anim::RUN` for any spline with `duration>0`.
-3. The one place that *can* select Walk (`application.cpp:1957-1961`) keys off `creatureWalkingState_`, which is only populated from `MSG_MOVE_*` WALKING flags — packets NPCs on spline patrols don't send — so `isWalkingNow` is effectively always false for creatures.
-
-**Secondary ("run while standing still") — MED confidence.** RUN is a looping animation whose only teardown to STAND is the edge-triggered per-frame sync in `application.cpp:1944-1967`. That reset is skippable: the loop early-`continue`s at `:1799` for creatures beyond 320u (a creature that stops while sync-culled keeps looping RUN), and the block is also skipped when the entity is momentarily absent/type-mismatched (`:1770`). Crucially, `character_renderer.cpp:1836-1838` completes the interpolation without any fallback STAND, so nothing in the renderer itself corrects a stuck looping locomotion anim.
-
-### Evidence
-- `entity_spawn_callback_handler.cpp:157-159`:
-  ```cpp
-  if (!gotState || (curAnimId != rendering::anim::DEATH && curAnimId != rendering::anim::RUN)) {
-      cr->playAnimation(instanceId, rendering::anim::RUN, /*loop=*/true);
-  }
-  ```
-  Hardcoded RUN; no walk/run branch; comment at `:144-145` even says "Play Run animation (anim 5) for the duration of the spline move."
-- `spline_packet.hpp:50-65`: flags FINAL_POINT/TARGET/ANGLE, CATMULLROM, CYCLIC, ENTER_CYCLE, ANIMATION, PARABOLIC — **no Walkmode**. Grep for `WALKMODE`/`Walkmode`/`0x00001000` across `src/game` returns nothing.
-- **Pre-empting the obvious objection** ("doesn't `application.cpp:1957` override RUN with WALK?"): No. (a) `isWalkingNow = _creatureWalkingState.count(guid) > 0` is ~never true for spline-driven NPCs because that map is only fed by `MSG_MOVE`/object-update WALKING flags (`animation_callback_handler.cpp:306-316`). (b) The re-selection is gated on `stateChanged`, but the callback pre-sets `_creatureWasMoving[guid]=true` (`:160`), suppressing the moving rising-edge. So the hardcoded RUN wins for the duration of the move.
-- Standing-still teardown gap: `application.cpp:1799` `if (canonDistSq > syncRadiusSq) continue;` sits above the STAND-reset block (`:1962-1966`); `character_renderer.cpp:1836-1838` sets `isMoving=false` with no `playAnimation(..., STAND)` fallback (contrast `:3199-3201` which only fires on an explicit zero-distance `moveInstanceTo`).
-
-### Suggested approach
-1. **Plumb Walkmode end-to-end (fixes the primary bug):**
-   - Add the Walkmode constant to `SplineFlag` (`spline_packet.hpp`). **Verify the exact bit against the server's `MoveSplineFlag::Walkmode` in AzerothCore/TrinityCore 3.3.5a** before committing a value — do not assume `0x00001000`.
-   - Extract it in `parseMonsterMoveSplineBody` into `SplineBlockData` (e.g. `bool walkmode`).
-   - Extend `CreatureMoveCallback` to carry the walk flag (or a small enum: walk/run/swim/fly), and pass it from every `creatureMoveCallbackRef()` call site in `movement_handler.cpp`/`entity_controller.cpp`.
-   - In `entity_spawn_callback_handler.cpp:setCreatureMoveCallback`, select `anim::WALK` vs `anim::RUN` from that flag instead of hardcoding RUN. Keep the existing swim/fly resolution.
-2. **Guarantee return-to-idle (fixes the secondary bug):** in `character_renderer.cpp` update loop where interpolation completes (`:1836-1838`), if the just-finished animation is a looping locomotion anim (WALK/RUN/SWIM/FLY_FORWARD) and no new move is queued, reset to the matching idle (STAND/SWIM_IDLE/FLY_IDLE) — so the renderer self-heals independent of the `application.cpp` sync edge-trigger. Alternatively/additionally, ensure the STAND-reset block in `application.cpp` runs before the `:1799` distance cull (or is re-evaluated on re-entry) for creatures that stop while culled.
-3. Reconcile the two competing drivers (the `creatureMoveCallback` immediate play vs the `application.cpp:1934-1969` per-frame re-selection) so they agree on walk/run source of truth; prefer the server spline flag as authoritative.
-
-**Unknowns / risks:** exact Walkmode bit value (must be server-verified); whether some cores additionally send `SMSG_SPLINE_MOVE_SET_WALK_MODE` (already synth-handled at `movement_handler.cpp:59`) so that persistent walk state should also be honored between splines; ensuring the idle-reset heuristic doesn't stomp emote/combat/one-shot animations (guard on looping locomotion ids only, keep the existing Death guard).
-
-### Effort / risk
-Medium · Medium. Touches packet parsing, a cross-module callback signature, and two animation drivers, but each change is localized and well-bounded. Main risk is the unverified spline bit and not regressing swim/fly/emote handling.
+## Approach (implemented for WotLK)
+1. **Speed inference** — `isWalkingSpeed(pathLength, durationMs)` in `include/game/spline_packet.hpp`:
+   `speed = pathLength / (duration/1000)`; walk if `speed <= WALK_RUN_SPEED_THRESHOLD` (4.0 yd/s, midway
+   between base walk 2.5 and run 7.0). Universal signal — also covers Classic/TBC without their flag.
+2. **Compute at the move sites** — `movement_handler.cpp` primary path sums the true path length
+   (start→waypoints→dest) and passes `walk`; the transport path uses straight-line distance. Snap/stop
+   sites (duration 0) pass `false`.
+3. **Reconcile the two drivers** — the move callback (`entity_spawn_callback_handler.cpp`) feeds
+   `getCreatureWalkingState()` (`walk` → set, else erase; same contract as `setUnitMoveFlagsCallback`), so
+   the per-frame selector in `application.cpp` agrees instead of overriding. Also selects `WALK`/`RUN`
+   directly and compares the "already playing" guard against the selected anim so walk↔run transitions restart.
+4. **`bool walk` callback signature** carries the decision through all 13 `creatureMoveCallbackRef()` sites.
 
 ## Tasks / Subtasks
-- [ ] Confirm the Walkmode spline-flag bit value against AzerothCore/TrinityCore 3.3.5a `MoveSplineFlag`.
-- [ ] Add Walkmode to `SplineFlag` (`include/game/spline_packet.hpp`) and extract it into `SplineBlockData` in `parseMonsterMoveSplineBody` (`src/game/spline_packet.cpp`).
-- [ ] Extend `CreatureMoveCallback` to carry walk (and ideally swim/fly) state; update all `creatureMoveCallbackRef()` call sites in `movement_handler.cpp` and `entity_controller.cpp`.
-- [ ] Replace the hardcoded `anim::RUN` in `entity_spawn_callback_handler.cpp:158` with walk/run selection from the new flag.
-- [ ] Add a return-to-idle fallback in `character_renderer.cpp` when a looping locomotion animation's move interpolation completes (`:1836-1838`).
-- [ ] Ensure the `application.cpp` STAND-reset is not permanently skipped by the `:1799` distance cull for creatures that stop while culled.
-- [ ] Verify swim/fly and emote/combat animations are unaffected.
+- [x] Determine how walk/run is conveyed on the target server → **spline speed** (WotLK/AC has no walk flag). Verified against AzerothCore + cmangos sources.
+- [x] Add `isWalkingSpeed()` + `WALK_RUN_SPEED_THRESHOLD` (spline_packet.hpp); remove the wrong `WALKMODE`/`splineIsWalking`.
+- [x] Compute `walk` from path length ÷ duration at the spline move sites; thread `bool walk` through `CreatureMoveCallback` (13 sites; 2 real, 11 snap→false).
+- [x] Select `WALK` vs `RUN` in the callback and **feed `getCreatureWalkingState()`** so the per-frame `application.cpp` selector agrees (the override fix).
+- [x] Unit test `isWalkingSpeed` (`tests/test_walk_speed.cpp`) — walk/run boundary + degenerate cases; TDD red→green.
+- [ ] **Live-verify** on AzerothCore: patrolling orcs walk; running mobs run; tune `WALK_RUN_SPEED_THRESHOLD` from the temporary `[002dbg]` speed log if needed.
+- [ ] **Part 2:** route creature stop→idle through `LocomotionFSM` (grace timer). Fixes "run in place" + Story 006 half.
+- [ ] Remove the temporary `[002dbg]` speed logging before committing the final code.
+- [ ] Correct swim/fly regression check once live.
 
 ## Testing
-Against a live AzerothCore/TrinityCore 3.3.5a server:
-1. Stand near a patrolling guard that the server walks — confirm Walk (4), not Run (5). (Enable `[AnimDbg]` logging / inspect `getAnimationState` to read the played id.)
-2. Aggro a fleeing critter / mob commanded to run — confirm Run (5).
-3. Let a patrolling creature reach a waypoint and idle — confirm it returns to Stand (0) within ~1-2 frames and does not run in place.
-4. Repeat #3 at >320u then walk toward the creature — confirm it is standing (not running) on approach (validates the cull-gap fix).
-5. Test a swimming murloc and a flying gryphon/bat — confirm Swim/SwimIdle and Fly/FlyIdle still resolve correctly.
-6. Kill a moving creature mid-spline — confirm Death (1) plays and is not overridden by locomotion selection.
+Live against AzerothCore 3.3.5a:
+1. Patrolling Orgrimmar orc / city guard → Walk (4), not Run (5).
+2. Aggro'd/fleeing mob → Run (5).
+3. Read the temporary `[002dbg]` log: walkers should cluster near ~2.5 yd/s, runners near ~7 yd/s — confirms the 4.0 threshold separates them, tune if reality differs.
+4. Swimming murloc / flying gryphon → Swim/Fly unaffected.
+5. (Part 2) creature stops → returns to Stand, no run-in-place.
+
+## Dev Agent Record
+### Attempt 1 — Walkmode spline flag (ABANDONED)
+Read `WALKMODE=0x1000` from the spline flags. Built, unit-tested, committed — then live testing showed
+walk-speed/run-anim and `splineFlags=0x0` everywhere. Server source proved WotLK has no walkmode flag.
+Branch history was reset to `master` and the approach removed. Lesson: the `SplineFlag` table was a
+Classic/TBC (mangos) reference, not WotLK — verify wire specs against the actual target server's source.
+
+### Attempt 2 — Speed inference (CURRENT)
+- **Files:** `include/game/spline_packet.hpp` (`isWalkingSpeed` + threshold; corrected flag-table comment),
+  `include/game/game_handler.hpp` (`bool walk` signature), `src/core/entity_spawn_callback_handler.cpp`
+  (feed `getCreatureWalkingState()` + select WALK/RUN), `src/game/movement_handler.cpp` (path-length →
+  `isWalkingSpeed` at spline sites; temp `[002dbg]` speed log), `src/game/entity_controller.cpp` (snap→false),
+  `tests/test_walk_speed.cpp` + `tests/CMakeLists.txt`.
+- **TDD:** stubbed `isWalkingSpeed → false` (old always-run) → walk cases FAILED (red); real impl → 11/11 pass (green).
+- **What survived the pivot:** the per-frame-override reconciliation finding and the `bool walk` plumbing —
+  only *how `walk` is computed* changed (speed instead of flag).
+
+### Reference material
+Server sources cloned locally for cross-core verification: `~/github.com/araxiaonline/AzerothCore-wotlk-with-NPCBots`
+(WotLK), `~/github.com/cmangos/mangos-classic`, `~/github.com/cmangos/mangos-tbc`.
 
 ## Change Log
 | Date | Change | Author |
 |---|---|---|
 | 2026-07-09 | Story created + investigated | agent team |
-
-## Dev Agent Record
-_(populated during implementation)_
+| 2026-07-09 | Attempt 1 (Walkmode flag) implemented, then INVALIDATED by live test + server source | dev |
+| 2026-07-09 | Cross-core comparison (AC vs cmangos classic/TBC); confirmed WotLK has no walk flag | dev |
+| 2026-07-09 | Pivoted to speed inference; implemented + unit-tested (red→green); branch history reset | dev |
