@@ -1,9 +1,17 @@
 # Story 002: Creatures always play Run animation regardless of walk/run mode or idle state
 
 ## Status
-In Progress — **Part 1 (walk/run) reworked to SPEED INFERENCE** for WotLK/AzerothCore, implemented +
-unit-tested (TDD red→green) on branch `fix/002-creature-run-animation` (branched from `master`,
-independent of #3). Awaiting live verification. Part 2 (return-to-idle / "run in place") still deferred.
+**Part 1 (walk/run): DONE + LIVE-VERIFIED 2026-07-10** — speed inference implemented (commit
+`3d5fc8cc`), unit-tested (TDD red→green), and confirmed in Orgrimmar: patrolling guards walk,
+mobs run. Part 2 (return-to-idle / "run in place") still deferred to `LocomotionFSM`.
+
+> **Note on the marathon debugging detour:** live verification was blocked for hours by what looked
+> like "creatures vanishing/flashing when they walk." That turned out to be a **separate, pre-existing
+> bug (issue #6)**: the per-frame sync snapped moving units' Z to the terrain heightmap, dropping them
+> through Orgrimmar's raised WMO floor to the desert below (they were walking fine, just underneath the
+> city). Fixed in commit `e8192e88`. The walk animation itself was never broken — proven by camera-
+> clipping under the floor and seeing an NPC walk normally. Lesson logged: test the pristine baseline
+> EARLY to separate "my change" from "pre-existing" before deep-diving a regression.
 
 > ### ⚠️ Major course-correction (2026-07-09) — the original "Walkmode spline flag" premise was WRONG for this server
 > The first implementation read a `Walkmode` spline-flag bit (assumed `0x1000`) from `SMSG_MONSTER_MOVE`.
