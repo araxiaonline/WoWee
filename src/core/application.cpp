@@ -1817,7 +1817,12 @@ void Application::update(float deltaTime) {
                     // creatures keep their server-authoritative Z (flight masters, etc.).
                     if (entity->isActivelyMoving() && renderer->getTerrainManager()) {
                         auto terrainZ = renderer->getTerrainManager()->getHeightAt(renderPos.x, renderPos.y);
-                        if (terrainZ.has_value()) {
+                        // Snap to terrain ONLY when the unit is essentially at terrain level. If its
+                        // server Z sits well above terrain it is standing on a WMO/M2 floor (city
+                        // platform, ramp, bridge) — snapping to terrain would drop it through the
+                        // floor (issue #6: creatures/bots sink below Orgrimmar the moment they move).
+                        constexpr float kOnTerrainTolerance = 2.0f;
+                        if (terrainZ.has_value() && renderPos.z <= terrainZ.value() + kOnTerrainTolerance) {
                             renderPos.z = terrainZ.value();
                         }
                     }
@@ -2025,10 +2030,14 @@ void Application::update(float deltaTime) {
                         inOverrun ? entity->getLatestZ() : entity->getZ());
                     glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
 
-                    // Clamp other players' Z to terrain surface during movement
+                    // Clamp other players'/bots' Z to terrain surface during movement — but only
+                    // when they are near terrain level. A unit whose server Z is well above terrain
+                    // is on a WMO/M2 floor; snapping to terrain would sink it through the floor
+                    // (issue #6 — NPCBots dropping below the city when they move to follow).
                     if (entity->isActivelyMoving() && renderer->getTerrainManager()) {
                         auto terrainZ = renderer->getTerrainManager()->getHeightAt(renderPos.x, renderPos.y);
-                        if (terrainZ.has_value()) {
+                        constexpr float kOnTerrainTolerance = 2.0f;
+                        if (terrainZ.has_value() && renderPos.z <= terrainZ.value() + kOnTerrainTolerance) {
                             renderPos.z = terrainZ.value();
                         }
                     }
