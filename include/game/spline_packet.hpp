@@ -47,6 +47,14 @@ struct SplineBlockData {
 };
 
 // ── Spline flag constants ───────────────────────────────────────
+// WARNING (verified against core sources — see araxia/docs/improvements/002): these bit
+// values are the **mangos (Classic/TBC)** `MoveSplineFlag` layout, NOT the WotLK one.
+// AzerothCore/TrinityCore (WotLK) use a DIFFERENT, shifted layout:
+//   WotLK Final_Point=0x8000 (here 0x10000), Catmullrom=0x40000 (here 0x80000),
+//   Cyclic=0x80000, Enter_Cycle=0x100000; and WotLK bit 0x100 is Done, not walk/run.
+// So this table is correct for Classic/TBC/Turtle but WRONG for WotLK. The WotLK monster-move
+// path must NOT rely on these values (e.g. for flying/catmullrom uncompressed-waypoint
+// detection). Making these expansion-aware is tracked as a separate movement-layer issue.
 namespace SplineFlag {
     constexpr uint32_t FINAL_POINT    = 0x00010000;
     constexpr uint32_t FINAL_TARGET   = 0x00020000;
@@ -63,6 +71,22 @@ namespace SplineFlag {
     // TBC-era alternative for uncompressed check
     constexpr uint32_t UNCOMPRESSED_MASK_TBC = CATMULLROM | 0x00002000;
 } // namespace SplineFlag
+
+// Walk vs run for WotLK/AzerothCore creatures is NOT conveyed by a spline flag. AzerothCore's
+// MoveSplineFlag has no Walkmode bit at all, and ordinary ground moves serialize flags=0
+// (linear paths, masked). Walk is expressed only through the spline's SPEED: the server sizes
+// the move's duration from walk speed (~2.5 yd/s) vs run speed (~7.0 yd/s). We therefore infer
+// it from the move's average speed = pathLength / duration and classify against a midpoint
+// threshold. The walk/run gap is wide, so this separates cleanly — and it is a *universal*
+// signal (a walking creature moves at walk speed on every expansion), so it also covers
+// Classic/TBC without needing their (different) walk/run flag bit. (Story 002.)
+constexpr float WALK_RUN_SPEED_THRESHOLD = 4.0f;  // yd/s, between base walk 2.5 and run 7.0
+
+[[nodiscard]] constexpr bool isWalkingSpeed(float pathLength, uint32_t durationMs) {
+    if (durationMs == 0 || pathLength <= 0.0f) return false;  // instantaneous/degenerate → not a walk
+    const float speed = pathLength / (static_cast<float>(durationMs) / 1000.0f);
+    return speed <= WALK_RUN_SPEED_THRESHOLD;
+}
 
 /// Decode a single packed-delta waypoint.
 /// Format: bits [0:10] = X (11-bit signed), [11:21] = Y (11-bit signed), [22:31] = Z (10-bit signed).

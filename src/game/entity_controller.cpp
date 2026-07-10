@@ -1836,7 +1836,7 @@ void EntityController::handleMovementUpdate(const UpdateBlock& block) {
                     entity->getType() == ObjectType::UNIT &&
                     transportGuids_.count(block.guid) == 0 &&
                     owner_.creatureMoveCallbackRef()) {
-                    owner_.creatureMoveCallbackRef()(block.guid, pos.x, pos.y, pos.z, 0);
+                    owner_.creatureMoveCallbackRef()(block.guid, pos.x, pos.y, pos.z, 0, /*walk=*/false);
                 }
             } else {
                 LOG_WARNING("MOVEMENT update for unknown entity: 0x", std::hex, block.guid, std::dec);

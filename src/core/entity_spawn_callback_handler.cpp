@@ -128,7 +128,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
     });
 
     // Creature move callback (online mode) - update creature positions
-    gameHandler_.setCreatureMoveCallback([this](uint64_t guid, float x, float y, float z, uint32_t durationMs) {
+    gameHandler_.setCreatureMoveCallback([this](uint64_t guid, float x, float y, float z, uint32_t durationMs, bool walk) {
         if (!renderer_.getCharacterRenderer()) return;
         uint32_t instanceId = 0;
         bool isPlayer = false;
@@ -141,21 +141,42 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
             glm::vec3 renderPos = core::coords::canonicalToRender(glm::vec3(x, y, z));
             float durationSec = static_cast<float>(durationMs) / 1000.0f;
             renderer_.getCharacterRenderer()->moveInstanceTo(instanceId, renderPos, durationSec);
-            // Play Run animation (anim 5) for the duration of the spline move.
-            // WoW M2 animation IDs: 4=Walk, 5=Run.
-            // Don't override Death animation (1). The per-frame sync loop will return to
-            // Stand when movement stops.
+            // Locomotion animation for the duration of the spline move. Walk vs Run is inferred
+            // from the move's speed (WotLK has no walkmode flag — see spline_packet.hpp). WoW M2
+            // animation IDs: 4=Walk, 5=Run. Don't override Death (1); the per-frame sync loop
+            // returns the unit to Stand when movement stops.
             if (durationMs > 0) {
                 // Player animation is managed by the local renderer state machine —
                 // don't reset it here or every server movement packet restarts the
-                // run cycle from frame 0, causing visible stutter.
+                // cycle from frame 0, causing visible stutter.
                 if (!isPlayer) {
-                    uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     auto* cr = renderer_.getCharacterRenderer();
+                    // Some creature models have NO Walk (4) sequence. playAnimation() silently
+                    // falls back to sequence[0] for a missing anim, so currentAnimationId never
+                    // becomes WALK — the "already playing?" guard below can't suppress it and WALK
+                    // gets replayed every move+frame, resetting animationTime to 0 (frozen model).
+                    // So only treat the move as a walk if the model actually has a walk sequence.
+                    const bool effectiveWalk = walk && cr->hasAnimation(instanceId, rendering::anim::WALK);
+
+                    // Reconcile the two locomotion drivers: application.cpp re-selects Walk/Run
+                    // EVERY frame from getCreatureWalkingState() and defaults to Run when the guid
+                    // is absent — overriding a one-shot playAnimation here. Spline NPCs never send
+                    // the MSG_MOVE WALKING flag that normally feeds that map, so patrols the server
+                    // walks were stuck running. Feed the effective walk state into the SAME map
+                    // (same set/erase contract as setUnitMoveFlagsCallback) so the per-frame
+                    // selector agrees — and never asks a walk-less model for WALK. (Story 002.)
+                    auto& walkState = entitySpawner_.getCreatureWalkingState();
+                    if (effectiveWalk) walkState[guid] = true;
+                    else               walkState.erase(guid);
+
+                    const uint32_t moveAnim = effectiveWalk ? rendering::anim::WALK : rendering::anim::RUN;
+                    uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
-                    // Only start Run if not already running and not in Death animation.
-                    if (!gotState || (curAnimId != rendering::anim::DEATH && curAnimId != rendering::anim::RUN)) {
-                        cr->playAnimation(instanceId, rendering::anim::RUN, /*loop=*/true);
+                    // Start the selected locomotion anim unless it is already playing (avoids
+                    // frame-0 restart stutter) or the unit is dead. Comparing against moveAnim
+                    // (not a hardcoded RUN) means a walk↔run transition correctly restarts.
+                    if (!gotState || (curAnimId != rendering::anim::DEATH && curAnimId != moveAnim)) {
+                        cr->playAnimation(instanceId, moveAnim, /*loop=*/true);
                     }
                     entitySpawner_.getCreatureWasMoving()[guid] = true;
                 }

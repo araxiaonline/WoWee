@@ -1100,7 +1100,7 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
 
     if (owner_.creatureMoveCallbackRef()) {
         const uint32_t notifyDuration = isStopOpcode ? 0u : durationMs;
-        owner_.creatureMoveCallbackRef()(moverGuid, canonical.x, canonical.y, canonical.z, notifyDuration);
+        owner_.creatureMoveCallbackRef()(moverGuid, canonical.x, canonical.y, canonical.z, notifyDuration, /*walk=*/false);
     }
 
     if (owner_.unitAnimHintCallbackRef() && isJumpOpcode) {
@@ -1480,9 +1480,21 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         }
 
         if (owner_.creatureMoveCallbackRef()) {
+            // Walk vs Run is inferred from the move's average speed — WotLK carries no walkmode
+            // flag (see spline_packet.hpp). Sum the true path length start→waypoints→dest in
+            // server coords (distance is preserved by the canonical transform).
+            float pathLen = 0.0f;
+            glm::vec3 prevPt(data.x, data.y, data.z);
+            for (const auto& wp : data.waypoints) {
+                glm::vec3 curPt(wp.x, wp.y, wp.z);
+                pathLen += glm::distance(prevPt, curPt);
+                prevPt = curPt;
+            }
+            pathLen += glm::distance(prevPt, glm::vec3(data.destX, data.destY, data.destZ));
+            const bool walk = isWalkingSpeed(pathLen, data.duration);
             owner_.creatureMoveCallbackRef()(data.guid,
                 destCanonical.x, destCanonical.y, destCanonical.z,
-                data.duration);
+                data.duration, walk);
         }
     } else if (data.moveType == 1) {
         glm::vec3 posCanonical = core::coords::serverToCanonical(
@@ -1492,7 +1504,7 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
 
         if (owner_.creatureMoveCallbackRef()) {
             owner_.creatureMoveCallbackRef()(data.guid,
-                posCanonical.x, posCanonical.y, posCanonical.z, 0);
+                posCanonical.x, posCanonical.y, posCanonical.z, 0, /*walk=*/false);
         }
     } else if (data.moveType == 4) {
         float orientation = core::coords::serverToCanonicalYaw(data.facingAngle);
@@ -1501,7 +1513,7 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         entity->setPosition(posCanonical.x, posCanonical.y, posCanonical.z, orientation);
         if (owner_.creatureMoveCallbackRef()) {
             owner_.creatureMoveCallbackRef()(data.guid,
-                posCanonical.x, posCanonical.y, posCanonical.z, 0);
+                posCanonical.x, posCanonical.y, posCanonical.z, 0, /*walk=*/false);
         }
     } else if (data.moveType == 3 && data.facingTarget != 0) {
         auto target = owner_.getEntityManager().getEntity(data.facingTarget);
@@ -1536,7 +1548,7 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
             glm::vec3 worldPos = owner_.getTransportManager()->getPlayerWorldPosition(transportGuid, localCanonical);
             entity->setPosition(worldPos.x, worldPos.y, worldPos.z, entity->getOrientation());
             if (entity->getType() == ObjectType::UNIT && owner_.creatureMoveCallbackRef())
-                owner_.creatureMoveCallbackRef()(moverGuid, worldPos.x, worldPos.y, worldPos.z, 0);
+                owner_.creatureMoveCallbackRef()(moverGuid, worldPos.x, worldPos.y, worldPos.z, 0, /*walk=*/false);
         }
         return;
     }
@@ -1551,7 +1563,7 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
             glm::vec3 worldPos = owner_.getTransportManager()->getPlayerWorldPosition(transportGuid, localCanonical);
             entity->setPosition(worldPos.x, worldPos.y, worldPos.z, entity->getOrientation());
             if (entity->getType() == ObjectType::UNIT && owner_.creatureMoveCallbackRef())
-                owner_.creatureMoveCallbackRef()(moverGuid, worldPos.x, worldPos.y, worldPos.z, 0);
+                owner_.creatureMoveCallbackRef()(moverGuid, worldPos.x, worldPos.y, worldPos.z, 0, /*walk=*/false);
         }
         return;
     }
@@ -1613,8 +1625,11 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
         owner_.setTransportAttachment(moverGuid, entity->getType(), transportGuid, destLocalCanonical, false, 0.0f);
         entity->startMoveTo(destWorld.x, destWorld.y, destWorld.z, facingAngle, duration / 1000.0f);
 
-        if (entity->getType() == ObjectType::UNIT && owner_.creatureMoveCallbackRef())
-            owner_.creatureMoveCallbackRef()(moverGuid, destWorld.x, destWorld.y, destWorld.z, duration);
+        if (entity->getType() == ObjectType::UNIT && owner_.creatureMoveCallbackRef()) {
+            const float tPathLen = glm::distance(startLocalCanonical, destLocalCanonical);
+            owner_.creatureMoveCallbackRef()(moverGuid, destWorld.x, destWorld.y, destWorld.z, duration,
+                                             isWalkingSpeed(tPathLen, duration));
+        }
 
         LOG_DEBUG("SMSG_MONSTER_MOVE_TRANSPORT: mover=0x", std::hex, moverGuid,
                   " transport=0x", transportGuid, std::dec,
@@ -1624,7 +1639,7 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
         owner_.setTransportAttachment(moverGuid, entity->getType(), transportGuid, startLocalCanonical, false, 0.0f);
         entity->setPosition(startWorld.x, startWorld.y, startWorld.z, facingAngle);
         if (entity->getType() == ObjectType::UNIT && owner_.creatureMoveCallbackRef())
-            owner_.creatureMoveCallbackRef()(moverGuid, startWorld.x, startWorld.y, startWorld.z, 0);
+            owner_.creatureMoveCallbackRef()(moverGuid, startWorld.x, startWorld.y, startWorld.z, 0, /*walk=*/false);
     }
 }
 
@@ -2742,7 +2757,7 @@ void MovementHandler::updateAttachedTransportChildren(float /*deltaTime*/) {
 
         if (attachment.type == ObjectType::UNIT) {
             if (owner_.creatureMoveCallbackRef()) {
-                owner_.creatureMoveCallbackRef()(childGuid, composed.x, composed.y, composed.z, 0);
+                owner_.creatureMoveCallbackRef()(childGuid, composed.x, composed.y, composed.z, 0, /*walk=*/false);
             }
         } else if (attachment.type == ObjectType::GAMEOBJECT) {
             if (owner_.gameObjectMoveCallbackRef()) {

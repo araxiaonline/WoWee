@@ -233,6 +233,20 @@ target_link_libraries(test_anim_capability PRIVATE catch2_main)
 add_test(NAME anim_capability COMMAND test_anim_capability)
 register_test_target(test_anim_capability)
 
+# ── test_walk_speed ──────────────────────────────────────────
+# Header-only: constexpr speed-based walk/run classifier in spline_packet.hpp (Story 002)
+add_executable(test_walk_speed
+    test_walk_speed.cpp
+)
+target_include_directories(test_walk_speed PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_walk_speed SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_walk_speed PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_walk_speed PRIVATE glm::glm)
+endif()
+add_test(NAME walk_speed COMMAND test_walk_speed)
+register_test_target(test_walk_speed)
+
 # ── test_indoor_shadows ──────────────────────────────────────
 add_executable(test_indoor_shadows
     test_indoor_shadows.cpp

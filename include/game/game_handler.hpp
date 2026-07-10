@@ -1148,7 +1148,11 @@ public:
 
     // Creature move callback (online mode - triggered by SMSG_MONSTER_MOVE)
     // Parameters: guid, x, y, z (canonical), duration_ms (0 = instant)
-    using CreatureMoveCallback = std::function<void(uint64_t guid, float x, float y, float z, uint32_t durationMs)>;
+    // `walk` = the move should play Walk (true) vs Run (false), inferred from the spline's
+    // average speed (WotLK carries no walkmode flag — see spline_packet.hpp isWalkingSpeed).
+    // Only meaningful when durationMs > 0; snap/stop callers (durationMs = 0) pass false —
+    // the value is not consulted on a stop. (Story 002.)
+    using CreatureMoveCallback = std::function<void(uint64_t guid, float x, float y, float z, uint32_t durationMs, bool walk)>;
     void setCreatureMoveCallback(CreatureMoveCallback cb) { creatureMoveCallback_ = std::move(cb); }
 
     // Transport move callback (online mode - triggered when transport position updates)
