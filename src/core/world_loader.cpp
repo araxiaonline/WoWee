@@ -206,6 +206,10 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         return;
     }
 
+    // True for a real cross-map transfer (not initial login, not same-map). Captured before
+    // loadedMapId_ is updated below; used for the cross-map continent landing floor-snap. (Story 009.)
+    const bool isMapTransfer = (loadedMapId_ != 0xFFFFFFFFu && loadedMapId_ != mapId);
+
     // Guard against re-entrant calls. The worldEntryCallback defers new
     // entries while this flag is set; we process them at the end.
     loadingWorld_ = true;
@@ -1102,6 +1106,39 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
     // Only enter IN_GAME when this is the final map (no deferred entry pending).
     app_.setState(AppState::IN_GAME);
+
+    // Cross-map CONTINENT landing floor-snap (Story 009). The continent (terrain) load leaves the
+    // player on raw terrain, which can sit BELOW a WMO floor the teleport targeted (e.g. RFC exit →
+    // Orgrimmar's Cleft of Shadow: server target Z −18.57, but the player is dropped to terrain
+    // −25.08, ~6.7u below the Cleft floor at −18.345). Probe getFloorHeight from just above the
+    // SERVER TARGET Z (`z`) — which is the intended floor — so the search finds the walkable floor
+    // at/below it and NOT the ceiling far above (the ceiling here is +2.24; probing from the
+    // player's fallen Z + 40 wrongly caught it). Then lift the player onto that floor. One-shot: the
+    // Cleft WMO collision is loaded by IN_GAME (confirmed via diagnostic). Continents only — WMO-only
+    // instances already floor-snap (world_loader.cpp above) and would risk a bad snap here.
+    if (isMapTransfer && !isWMOOnlyMap && renderer_) {
+        glm::vec3 rp = renderer_->getCharacterPosition();     // render coords (Z == server Z)
+        const float probeRef = z + 5.0f;                      // just above the intended floor
+        std::optional<float> floor;
+        if (auto* wr = renderer_->getWMORenderer()) floor = wr->getFloorHeight(rp.x, rp.y, probeRef);
+        if (auto* mr = renderer_->getM2Renderer()) {
+            auto m = mr->getFloorHeight(rp.x, rp.y, probeRef);
+            if (m && (!floor || *m > *floor)) floor = m;
+        }
+        // Snap only when a floor is found near the intended landing (guards against grabbing a far
+        // surface) and it sits above the current (terrain) Z — lift onto it, never overshoot up.
+        if (floor && *floor > rp.z && std::abs(*floor - z) < 15.0f) {
+            const float wasZ = rp.z;
+            rp.z = *floor + 0.1f;
+            renderer_->getCharacterPosition() = rp;
+            if (gameHandler_) {
+                glm::vec3 canonical = core::coords::renderToCanonical(rp);
+                gameHandler_->setPosition(canonical.x, canonical.y, canonical.z);
+            }
+            LOG_INFO("Cross-map continent landing: snapped player onto WMO/M2 floor z=", *floor,
+                     " (was terrain z=", wasZ, ", server target z=", z, ")");
+        }
+    }
 
     // Load addons once per session on first world entry
     if (addonManager_ && !app_.addonsLoaded_) {
