@@ -70,6 +70,15 @@ public:
     // buffers (material descriptor sets, vertex/index buffers, etc.).
     void deferAfterAllFrameFences(std::function<void()>&& fn);
 
+    // Force-run every pending deferred-cleanup callback NOW, after a full
+    // vkDeviceWaitIdle. Use this before tearing down / resetting the descriptor
+    // pools and buffers those callbacks reference (e.g. a map change): otherwise
+    // a still-queued vkFreeDescriptorSets can fire *after* the pool was reset,
+    // freeing a stale handle and corrupting the driver's free-list (issue #8 /
+    // story 010). Draining on-idle is exactly what these callbacks were waiting
+    // for, so it is always safe. Returns the number of callbacks run.
+    uint32_t flushDeferredCleanup();
+
     // Accessors
     VkInstance getInstance() const { return instance; }
     VkPhysicalDevice getPhysicalDevice() const { return physicalDevice; }

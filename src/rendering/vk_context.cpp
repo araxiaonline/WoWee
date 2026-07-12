@@ -222,6 +222,25 @@ void VkContext::runDeferredCleanup(uint32_t frameIndex) {
     q.clear();
 }
 
+uint32_t VkContext::flushDeferredCleanup() {
+    if (!device) return 0;
+    // Wait for all in-flight work so the resources these callbacks free are
+    // guaranteed unused, then run every slot's queue. deferAfterAllFrameFences
+    // callbacks decrement a shared counter and run exactly once (on the slot
+    // that brings it to 0), so draining both slots runs each such callback once.
+    vkDeviceWaitIdle(device);
+    uint32_t ran = 0;
+    for (uint32_t fi = 0; fi < MAX_FRAMES_IN_FLIGHT; fi++) {
+        auto& q = deferredCleanup_[fi];
+        ran += static_cast<uint32_t>(q.size());
+        for (auto& fn : q) {
+            if (fn) fn();
+        }
+        q.clear();
+    }
+    return ran;
+}
+
 VkSampler VkContext::getOrCreateSampler(const VkSamplerCreateInfo& info) {
     // Clamp anisotropy if the device doesn't support the feature.
     VkSamplerCreateInfo adjusted = info;

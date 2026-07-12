@@ -270,6 +270,21 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         entitySpawner_->clearAllQueues();
 
         if (renderer_) {
+            // Drain any pending deferred-cleanup callbacks (deferred bone/material
+            // descriptor-set frees, buffer destroys) BEFORE any renderer resets or
+            // destroys the pools those callbacks reference. If a queued
+            // vkFreeDescriptorSets fired after the pool was reset below, it would
+            // free a stale handle and corrupt MoltenVK's free-list, crashing the
+            // next allocation on zone re-spawn (issue #8 / story 010). Every pool
+            // is still valid here and the flush waits idle, so this is safe.
+            if (auto* vk = renderer_->getVkContext()) {
+                uint32_t drained = vk->flushDeferredCleanup();
+                if (drained > 0) {
+                    LOG_DEBUG("Map change: drained ", drained,
+                              " pending deferred-cleanup callbacks before teardown");
+                }
+            }
+
             // Clear all world geometry from old map (including textures/models).
             // WMO clearAll and M2 clear both call vkDeviceWaitIdle internally,
             // ensuring no GPU command buffers reference old resources.
