@@ -233,6 +233,17 @@ target_link_libraries(test_anim_capability PRIVATE catch2_main)
 add_test(NAME anim_capability COMMAND test_anim_capability)
 register_test_target(test_anim_capability)
 
+# ── test_area_trigger_box ────────────────────────────────────
+# Header-only: server-frame box containment for area triggers (story 007)
+add_executable(test_area_trigger_box
+    test_area_trigger_box.cpp
+)
+target_include_directories(test_area_trigger_box PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_area_trigger_box SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_area_trigger_box PRIVATE catch2_main)
+add_test(NAME area_trigger_box COMMAND test_area_trigger_box)
+register_test_target(test_area_trigger_box)
+
 # ── test_indoor_shadows ──────────────────────────────────────
 add_executable(test_indoor_shadows
     test_indoor_shadows.cpp

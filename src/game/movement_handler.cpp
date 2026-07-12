@@ -3,6 +3,7 @@
 #include "game/game_utils.hpp"
 #include "game/packet_parsers.hpp"
 #include "game/spline_packet.hpp"
+#include "game/area_trigger_box.hpp"
 #include "game/transport_manager.hpp"
 #include "game/entity.hpp"
 #include "network/world_socket.hpp"
@@ -2622,31 +2623,24 @@ void MovementHandler::checkAreaTriggers() {
 
         bool inside = false;
         if (at.radius > 0.0f) {
-            // Sphere trigger — use actual DBC radius
+            // Sphere trigger — distance is swap-invariant, so canonical frame is fine.
             float dx = px - at.x;
             float dy = py - at.y;
             float dz = pz - at.z;
             float distSq = dx * dx + dy * dy + dz * dz;
             inside = (distSq <= at.radius * at.radius);
         } else if (at.boxLength > 0.0f || at.boxWidth > 0.0f || at.boxHeight > 0.0f) {
-            // Box trigger — use actual DBC dimensions
-            float effLength = at.boxLength;
-            float effWidth = at.boxWidth;
-            float effHeight = at.boxHeight;
-
-            float dx = px - at.x;
-            float dy = py - at.y;
-            float dz = pz - at.z;
-
-            // Rotate into box-local space
-            float cosYaw = std::cos(-at.boxYaw);
-            float sinYaw = std::sin(-at.boxYaw);
-            float localX = dx * cosYaw - dy * sinYaw;
-            float localY = dx * sinYaw + dy * cosYaw;
-
-            inside = (std::abs(localX) <= effLength * 0.5f &&
-                      std::abs(localY) <= effWidth * 0.5f &&
-                      std::abs(dz) <= effHeight * 0.5f);
+            // Box trigger — test in SERVER frame to match the server's Position::IsWithinBox
+            // exactly. at.boxLength/boxWidth/boxYaw are raw DBC (server frame); only at.x/at.y
+            // were swapped to canonical, so swap them (and the player) back to server. Doing the
+            // test in canonical frame WITHOUT swapping length/width transposes the box and makes
+            // the client fire from spots the server rejects as "too far" (Story 007).
+            glm::vec3 pServer = core::coords::canonicalToServer(glm::vec3(px, py, pz));
+            glm::vec3 cServer = core::coords::canonicalToServer(glm::vec3(at.x, at.y, at.z));
+            inside = isWithinServerBox(
+                pServer.x, pServer.y, pServer.z,
+                cServer.x, cServer.y, cServer.z,
+                at.boxYaw, at.boxLength * 0.5f, at.boxWidth * 0.5f, at.boxHeight * 0.5f);
         }
 
         if (inside) {
